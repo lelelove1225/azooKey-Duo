@@ -99,7 +99,7 @@ final class KeyboardViewController: UIInputViewController {
         let enabled = AutomaticFoldLayout.value
         // The active display is authoritative. Keyboard extensions may not receive hinge updates.
         let layout = enabled ? (displayLayout ?? foldLayout) : nil
-        KeyboardViewController.variableStates.setAutomaticJapaneseLayout(layout)
+        KeyboardViewController.variableStates.setAutomaticLanguageLayout(layout)
         #if DEBUG
         recordFoldDiagnostic(screenSize: screenSize, layout: layout, enabled: enabled)
         #endif

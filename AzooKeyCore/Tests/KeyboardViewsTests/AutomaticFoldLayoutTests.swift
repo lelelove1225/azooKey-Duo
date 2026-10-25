@@ -23,11 +23,11 @@ final class AutomaticFoldLayoutTests: XCTestCase {
         var maxCount: Int { 0 }
     }
 
-    private func states(japaneseLayout: LanguageLayout = .flick) -> VariableStates {
+    private func states(japaneseLayout: LanguageLayout = .flick, englishLayout: LanguageLayout = .qwerty) -> VariableStates {
         let defaults = UserDefaults(suiteName: "AutomaticFoldLayoutTests.\(UUID().uuidString)")!
         return VariableStates(
             clipboardHistoryManagerConfig: Clipboard(),
-            tabManagerConfig: Tabs(japaneseLayout: japaneseLayout),
+            tabManagerConfig: Tabs(japaneseLayout: japaneseLayout, englishLayout: englishLayout),
             userDefaults: defaults,
             layoutIdiom: .phone
         )
@@ -59,10 +59,10 @@ final class AutomaticFoldLayoutTests: XCTestCase {
 
     func testRepeatedLayoutPassDoesNotPublishAnotherUpdate() {
         let state = states()
-        state.setAutomaticJapaneseLayout(.qwerty)
+        state.setAutomaticLanguageLayout(.qwerty)
         var updates = 0
         let subscription = state.objectWillChange.sink { updates += 1 }
-        state.setAutomaticJapaneseLayout(.qwerty)
+        state.setAutomaticLanguageLayout(.qwerty)
         XCTAssertEqual(updates, 0)
         withExtendedLifetime(subscription) {}
     }
@@ -70,14 +70,14 @@ final class AutomaticFoldLayoutTests: XCTestCase {
     func testOpenCloseAndDisableRestoreSavedLayout() {
         let state = states(japaneseLayout: .qwerty)
         state.initialize()
-        state.setAutomaticJapaneseLayout(.flick)
+        state.setAutomaticLanguageLayout(.flick)
         XCTAssertEqual(state.tabManager.existentialTab(), .flick_hira)
         XCTAssertEqual(state.inputStyle, .direct)
-        state.setAutomaticJapaneseLayout(.qwerty)
+        state.setAutomaticLanguageLayout(.qwerty)
         XCTAssertEqual(state.tabManager.existentialTab(), .qwerty_hira)
         XCTAssertEqual(state.inputStyle, .roman2kana)
-        state.setAutomaticJapaneseLayout(.flick)
-        state.setAutomaticJapaneseLayout(nil)
+        state.setAutomaticLanguageLayout(.flick)
+        state.setAutomaticLanguageLayout(nil)
         XCTAssertEqual(state.tabManager.existentialTab(), .qwerty_hira)
         XCTAssertEqual(state.inputStyle, .roman2kana)
     }
@@ -86,32 +86,93 @@ final class AutomaticFoldLayoutTests: XCTestCase {
         let state = states()
         state.initialize()
         state.setTab(.system(.flick_numbersymbols))
-        state.setAutomaticJapaneseLayout(.qwerty)
+        state.setAutomaticLanguageLayout(.qwerty)
         XCTAssertEqual(state.tabManager.existentialTab(), .flick_numbersymbols)
         state.setTab(.system(.last_tab))
         XCTAssertEqual(state.tabManager.existentialTab(), .qwerty_hira)
         XCTAssertEqual(state.inputStyle, .roman2kana)
-        state.setAutomaticJapaneseLayout(nil)
+        state.setAutomaticLanguageLayout(nil)
         XCTAssertEqual(state.tabManager.existentialTab(), .flick_hira)
     }
 
     func testEmojiAndEnglishAreNotReplacedByJapanese() {
         let state = states()
         state.setTab(.system(.emoji_tab))
-        state.setAutomaticJapaneseLayout(.qwerty)
+        state.setAutomaticLanguageLayout(.qwerty)
         guard case .special(.emoji) = state.tabManager.existentialTab() else {
             return XCTFail("Opening must not dismiss the emoji tab")
         }
         state.setTab(.system(.user_english))
-        state.setAutomaticJapaneseLayout(.flick)
-        XCTAssertEqual(state.tabManager.existentialTab(), .qwerty_abc)
+        state.setAutomaticLanguageLayout(.flick)
+        XCTAssertEqual(state.tabManager.existentialTab(), .flick_abc)
+        XCTAssertEqual(state.keyboardLanguage, .en_US)
         state.setTab(.system(.user_japanese))
         XCTAssertEqual(state.tabManager.existentialTab(), .flick_hira)
     }
 
+    func testOpenEnglishUsesQwertyDespiteSavedFlick() {
+        for tab: TabData in [.system(.user_english), .system(.flick_english), .system(.qwerty_english)] {
+            let state = states(englishLayout: .flick)
+            state.initialize()
+            state.setAutomaticLanguageLayout(.qwerty)
+            state.setTab(tab)
+            XCTAssertEqual(state.tabManager.existentialTab(), .qwerty_abc)
+            XCTAssertEqual(state.inputStyle, .direct)
+            XCTAssertEqual(state.keyboardLanguage, .en_US)
+            XCTAssertEqual(state.tabManager.inputStyle(of: .user_dependent(.english)), .direct)
+            XCTAssertEqual(state.tabManager.language(of: .existential(.flick_abc)), .en_US)
+            XCTAssertTrue(state.tabManager.isCurrentTab(tab: .user_dependent(.english)))
+        }
+    }
+
+    func testEnglishOpenCloseAndDisableRestoreSavedLayout() {
+        for savedLayout: LanguageLayout in [.flick, .qwerty] {
+            let state = states(englishLayout: savedLayout)
+            state.setTab(.system(.user_english))
+            state.setAutomaticLanguageLayout(.qwerty)
+            XCTAssertEqual(state.tabManager.existentialTab(), .qwerty_abc)
+            state.setAutomaticLanguageLayout(.flick)
+            XCTAssertEqual(state.tabManager.existentialTab(), .flick_abc)
+            XCTAssertEqual(state.keyboardLanguage, .en_US)
+            XCTAssertEqual(state.inputStyle, .direct)
+            state.setAutomaticLanguageLayout(nil)
+            XCTAssertEqual(state.tabManager.existentialTab(), savedLayout == .flick ? .flick_abc : .qwerty_abc)
+        }
+    }
+
+    func testExplicitEnglishSurvivesNumbersAndReinitialization() {
+        let state = states(englishLayout: .flick)
+        state.setTab(.system(.flick_english))
+        state.setTab(.system(.flick_numbersymbols))
+        state.setAutomaticLanguageLayout(.qwerty)
+        XCTAssertEqual(state.tabManager.existentialTab(), .flick_numbersymbols)
+        state.setTab(.system(.last_tab))
+        XCTAssertEqual(state.tabManager.existentialTab(), .qwerty_abc)
+        state.closeKeyboard()
+        state.initialize()
+        XCTAssertEqual(state.tabManager.existentialTab(), .qwerty_abc)
+        XCTAssertEqual(state.keyboardLanguage, .en_US)
+        state.setAutomaticLanguageLayout(nil)
+        XCTAssertEqual(state.tabManager.existentialTab(), .flick_abc)
+        state.setTab(.system(.qwerty_english))
+        state.setAutomaticLanguageLayout(.flick)
+        XCTAssertEqual(state.tabManager.existentialTab(), .flick_abc)
+        state.setAutomaticLanguageLayout(nil)
+        XCTAssertEqual(state.tabManager.existentialTab(), .qwerty_abc)
+    }
+
+    func testExplicitCustomTabIsNotReplaced() {
+        let state = states()
+        state.setTab(.custom("test-custom"))
+        for layout: LanguageLayout in [.qwerty, .flick] {
+            state.setAutomaticLanguageLayout(layout)
+            XCTAssertEqual(state.tabManager.existentialTab(), .custard(.errorMessage))
+        }
+    }
+
     func testExplicitJapaneseTabsAndReinitializationRespectPosture() {
         let state = states()
-        state.setAutomaticJapaneseLayout(.qwerty)
+        state.setAutomaticLanguageLayout(.qwerty)
         state.setTab(.system(.flick_japanese))
         XCTAssertEqual(state.tabManager.existentialTab(), .qwerty_hira)
         XCTAssertEqual(state.inputStyle, .roman2kana)
@@ -119,7 +180,7 @@ final class AutomaticFoldLayoutTests: XCTestCase {
         state.initialize()
         XCTAssertEqual(state.tabManager.existentialTab(), .qwerty_hira)
         XCTAssertEqual(state.inputStyle, .roman2kana)
-        state.setAutomaticJapaneseLayout(.flick)
+        state.setAutomaticLanguageLayout(.flick)
         state.setTab(.system(.qwerty_japanese))
         XCTAssertEqual(state.tabManager.existentialTab(), .flick_hira)
         XCTAssertEqual(state.inputStyle, .direct)
@@ -129,9 +190,9 @@ final class AutomaticFoldLayoutTests: XCTestCase {
         let state = states()
         state.initialize()
         state.setKeyboardType(.numberPad)
-        state.setAutomaticJapaneseLayout(.qwerty)
+        state.setAutomaticLanguageLayout(.qwerty)
         XCTAssertEqual(state.tabManager.existentialTab(), .custard(.numberPad))
-        state.setAutomaticJapaneseLayout(.flick)
+        state.setAutomaticLanguageLayout(.flick)
         XCTAssertEqual(state.tabManager.existentialTab(), .custard(.numberPad))
         state.setTab(.system(.user_japanese))
         XCTAssertEqual(state.tabManager.existentialTab(), .flick_hira)
@@ -142,21 +203,21 @@ final class AutomaticFoldLayoutTests: XCTestCase {
         state.initialize()
         var composingText = ComposingText()
         composingText.insertAtCursorPosition("にほん", inputStyle: state.inputStyle)
-        state.setAutomaticJapaneseLayout(.qwerty)
+        state.setAutomaticLanguageLayout(.qwerty)
         composingText.insertAtCursorPosition("go", inputStyle: state.inputStyle)
         XCTAssertEqual(composingText.convertTarget, "にほんご")
-        state.setAutomaticJapaneseLayout(.flick)
+        state.setAutomaticLanguageLayout(.flick)
         composingText.insertAtCursorPosition("です", inputStyle: state.inputStyle)
         XCTAssertEqual(composingText.convertTarget, "にほんごです")
     }
 
     func testUnfinishedRomanSyllableIsNotLostOnClose() {
         let state = states()
-        state.setAutomaticJapaneseLayout(.qwerty)
+        state.setAutomaticLanguageLayout(.qwerty)
         var composingText = ComposingText()
         composingText.insertAtCursorPosition("nihonk", inputStyle: state.inputStyle)
         let before = composingText.convertTarget
-        state.setAutomaticJapaneseLayout(.flick)
+        state.setAutomaticLanguageLayout(.flick)
         composingText.insertAtCursorPosition("あ", inputStyle: state.inputStyle)
         XCTAssertEqual(composingText.convertTarget, before + "あ")
     }

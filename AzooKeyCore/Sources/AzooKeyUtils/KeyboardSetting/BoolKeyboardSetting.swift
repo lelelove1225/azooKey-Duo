@@ -316,8 +316,8 @@ private enum DeprecatedSetting {
 
 /// Enabled by default in the Duo fork; inert on devices without a hinge.
 public struct AutomaticFoldLayout: BoolKeyboardSettingKey {
-    public static let title: LocalizedStringKey = "開閉に合わせて日本語配列を切り替える"
-    public static let explanation: LocalizedStringKey = "閉じるとフリック、開くとローマ字入力になります。iPhone Duoで利用できます。"
+    public static let title: LocalizedStringKey = "開閉に合わせて日本語・英字配列を切り替える"
+    public static let explanation: LocalizedStringKey = "日本語・英字ともに、閉じるとフリック、開くとQWERTYになります。日本語QWERTYはローマ字入力です。iPhone Duoで利用できます。"
     public static let defaultValue = true
     public static let key = "automatic_fold_layout"
 }

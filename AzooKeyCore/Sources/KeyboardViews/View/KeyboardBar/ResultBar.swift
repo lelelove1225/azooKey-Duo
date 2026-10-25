@@ -236,7 +236,7 @@ struct ResultContextMenuView: View {
     }
 }
 
-struct ResultButtonStyle<Extension: ApplicationSpecificKeyboardViewExtension>: ButtonStyle {
+struct ResultButtonAppearance<Extension: ApplicationSpecificKeyboardViewExtension>: ButtonStyle {
     enum SelectionState: Sendable {
         case nothing
         case this
@@ -254,39 +254,87 @@ struct ResultButtonStyle<Extension: ApplicationSpecificKeyboardViewExtension>: B
         }
     }
     private let height: CGFloat
-    private let userSizePreference: Double
     private let selected: SelectionState
 
     @Environment(Extension.Theme.self) private var theme
 
     @MainActor init(height: CGFloat, selected: SelectionState = .nothing) {
-        self.userSizePreference = Extension.SettingProvider.resultViewFontSize
         self.height = height
         self.selected = selected
     }
 
-    private func background(configuration: Configuration) -> any ShapeStyle {
-        if configuration.isPressed {
-            theme.pushedKeyFillColor.color.opacity(0.5)
+    func makeBody(configuration: Configuration) -> some View {
+        ResultButtonLabel<Extension, _>(label: configuration.label, height: height, selected: selected, isPressed: configuration.isPressed)
+    }
+}
+
+private struct ResultButtonLabel<Extension: ApplicationSpecificKeyboardViewExtension, Label: View>: View {
+    let label: Label
+    let height: CGFloat
+    let selected: ResultButtonAppearance<Extension>.SelectionState
+    let isPressed: Bool
+    @Environment(Extension.Theme.self) private var theme
+
+    private var background: AnyShapeStyle {
+        if isPressed {
+            AnyShapeStyle(theme.pushedKeyFillColor.color.opacity(0.5))
         } else {
-            switch self.selected {
-            case .nothing: theme.resultBackgroundColor.color
-            case .this: Material.thin
-            case .other: theme.resultBackgroundColor.color.opacity(0.5)
+            switch selected {
+            case .nothing: AnyShapeStyle(theme.resultBackgroundColor.color)
+            case .this: AnyShapeStyle(Material.thin)
+            case .other: AnyShapeStyle(theme.resultBackgroundColor.color.opacity(0.5))
             }
         }
     }
 
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(Design.fonts.resultViewFont(theme: theme, userSizePrefrerence: self.userSizePreference))
+    var body: some View {
+        label
+            .font(Design.fonts.resultViewFont(theme: theme, userSizePrefrerence: Extension.SettingProvider.resultViewFontSize))
             .frame(height: height)
             .padding(.all, 5)
-            .foregroundStyle(theme.resultTextColor.color) // 文字色は常に不透明度1で描画する
-            .background(AnyShapeStyle(background(configuration: configuration)))
+            .foregroundStyle(theme.resultTextColor.color)
+            .background(background)
             .cornerRadius(5.0)
             .compositingGroup()
             .contentShape(Rectangle())
-            .animation(nil, value: configuration.isPressed)
+            .animation(nil, value: isPressed)
+    }
+}
+
+/// Use a concrete UIKit button surface on iOS 27, as for the character keys.
+/// Candidate scrolling must continue to use the enclosing scroll view's pan gesture.
+struct ResultButtonStyle<Extension: ApplicationSpecificKeyboardViewExtension>: PrimitiveButtonStyle {
+    typealias SelectionState = ResultButtonAppearance<Extension>.SelectionState
+    let height: CGFloat
+    var selected: SelectionState = .nothing
+
+    func makeBody(configuration: Configuration) -> some View {
+        ResultButtonBody<Extension>(configuration: configuration, height: height, selected: selected)
+    }
+}
+
+private struct ResultButtonBody<Extension: ApplicationSpecificKeyboardViewExtension>: View {
+    let configuration: PrimitiveButtonStyleConfiguration
+    let height: CGFloat
+    let selected: ResultButtonAppearance<Extension>.SelectionState
+    @State private var isPressed = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        if #available(iOS 27.0, *) {
+            ResultButtonLabel<Extension, _>(label: configuration.label, height: height, selected: selected, isPressed: isPressed)
+                .allowsHitTesting(false)
+                .overlay {
+                    NativeResultButton(isEnabled: isEnabled, onPressChanged: { isPressed = $0 }, onActivate: configuration.trigger)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction {
+                    if isEnabled { configuration.trigger() }
+                }
+        } else {
+            Button(action: configuration.trigger) { configuration.label }
+                .buttonStyle(ResultButtonAppearance<Extension>(height: height, selected: selected))
+        }
     }
 }

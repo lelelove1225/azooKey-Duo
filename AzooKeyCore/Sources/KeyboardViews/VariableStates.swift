@@ -353,6 +353,12 @@ public final class VariableStates: ObservableObject {
         }
     }
 
+    /// Changes the Japanese layout without committing or clearing the composition/results.
+    @MainActor public func setAutomaticJapaneseLayout(_ layout: LanguageLayout?) {
+        guard self.tabManager.automaticJapaneseLayout != layout else { return }
+        self.tabManager.setAutomaticJapaneseLayout(layout, variableStates: self)
+    }
+
     @MainActor public func setInputStyle(_ style: InputStyle) {
         self.inputStyle = style
     }

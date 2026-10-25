@@ -71,6 +71,18 @@ public struct TabManager {
     /// 一時的に表示を切り替えるタブ。lastTabに反映されない。
     private var temporalTab: ManagerTab?
     private var lastTab: ManagerTab?
+    // Runtime-only override: never overwrite the user's saved layout.
+    private(set) var automaticJapaneseLayout: LanguageLayout?
+
+    @MainActor mutating func setAutomaticJapaneseLayout(_ layout: LanguageLayout?, variableStates: VariableStates) {
+        guard automaticJapaneseLayout != layout else { return }
+        automaticJapaneseLayout = layout
+        let actualTab = existentialTab()
+        variableStates.setInputStyle(actualTab.inputStyle)
+        if let language = actualTab.language {
+            variableStates.keyboardLanguage = language
+        }
+    }
 
     public enum ManagerTab {
         case existential(KeyboardTab.ExistentialTab)
@@ -80,9 +92,9 @@ public struct TabManager {
     @MainActor func inputStyle(of tab: KeyboardTab) -> InputStyle {
         switch tab {
         case let .existential(tab):
-            return tab.inputStyle
+            return Self.existentialTab(of: .existential(tab), config: config, japaneseLayoutOverride: automaticJapaneseLayout).inputStyle
         case let .user_dependent(tab):
-            let actualTab = Self.actualTab(of: tab, config: config)
+            let actualTab = Self.actualTab(of: tab, config: config, japaneseLayoutOverride: automaticJapaneseLayout)
             return actualTab.inputStyle
         case .last_tab:
             fatalError()
@@ -92,29 +104,31 @@ public struct TabManager {
     @MainActor func language(of tab: KeyboardTab) -> KeyboardLanguage? {
         switch tab {
         case let .existential(tab):
-            return tab.language
+            return Self.existentialTab(of: .existential(tab), config: config, japaneseLayoutOverride: automaticJapaneseLayout).language
         case let .user_dependent(tab):
-            let actualTab = Self.actualTab(of: tab, config: config)
+            let actualTab = Self.actualTab(of: tab, config: config, japaneseLayoutOverride: automaticJapaneseLayout)
             return actualTab.language
         case .last_tab:
             fatalError()
         }
     }
 
-    @MainActor static func existentialTab(of tab: ManagerTab, config: any TabManagerConfiguration) -> KeyboardTab.ExistentialTab {
+    @MainActor static func existentialTab(of tab: ManagerTab, config: any TabManagerConfiguration, japaneseLayoutOverride: LanguageLayout? = nil) -> KeyboardTab.ExistentialTab {
         switch tab {
+        case let .existential(actual) where japaneseLayoutOverride != nil && (actual == .flick_hira || actual == .qwerty_hira):
+            return actualTab(of: .japanese, config: config, japaneseLayoutOverride: japaneseLayoutOverride)
         case let .existential(tab):
             return tab
         case let .user_dependent(tab):
-            return actualTab(of: tab, config: config)
+            return actualTab(of: tab, config: config, japaneseLayoutOverride: japaneseLayoutOverride)
         }
     }
 
     @MainActor public func existentialTab() -> KeyboardTab.ExistentialTab {
-        Self.existentialTab(of: self.tab, config: config)
+        Self.existentialTab(of: self.tab, config: config, japaneseLayoutOverride: automaticJapaneseLayout)
     }
 
-    @MainActor static func actualTab(of tab: KeyboardTab.UserDependentTab, config: any TabManagerConfiguration) -> KeyboardTab.ExistentialTab {
+    @MainActor static func actualTab(of tab: KeyboardTab.UserDependentTab, config: any TabManagerConfiguration, japaneseLayoutOverride: LanguageLayout? = nil) -> KeyboardTab.ExistentialTab {
         // ユーザの設定に合わせて遷移先のタブ(非user_dependent)を返す
         switch tab {
         case .english:
@@ -127,7 +141,7 @@ public struct TabManager {
                 return .custard((try? config.custardManager.custard(identifier: identifier)) ?? .errorMessage)
             }
         case .japanese:
-            switch config.japaneseLayout {
+            switch japaneseLayoutOverride ?? config.japaneseLayout {
             case .flick:
                 return .flick_hira
             case .qwerty:
@@ -141,9 +155,9 @@ public struct TabManager {
     @MainActor func isCurrentTab(tab: KeyboardTab) -> Bool {
         switch tab {
         case let .existential(actualTab):
-            return Self.existentialTab(of: self.tab, config: config) == actualTab
+            return Self.existentialTab(of: self.tab, config: config, japaneseLayoutOverride: automaticJapaneseLayout) == Self.existentialTab(of: .existential(actualTab), config: config, japaneseLayoutOverride: automaticJapaneseLayout)
         case let .user_dependent(type):
-            return Self.actualTab(of: type, config: config) == Self.existentialTab(of: self.tab, config: config)
+            return Self.actualTab(of: type, config: config, japaneseLayoutOverride: automaticJapaneseLayout) == Self.existentialTab(of: self.tab, config: config, japaneseLayoutOverride: automaticJapaneseLayout)
         case .last_tab:
             return false
         }
@@ -166,8 +180,9 @@ public struct TabManager {
 
     @MainActor mutating private func moveTab(to destination: KeyboardTab.ExistentialTab, variableStates: VariableStates) {
         // VariableStateの状態を遷移先のタブに合わせて適切に変更する
-        variableStates.setInputStyle(destination.inputStyle)
-        if let language = destination.language {
+        let resolved = Self.existentialTab(of: .existential(destination), config: config, japaneseLayoutOverride: automaticJapaneseLayout)
+        variableStates.setInputStyle(resolved.inputStyle)
+        if let language = resolved.language {
             variableStates.keyboardLanguage = language
         }
 
@@ -186,26 +201,27 @@ public struct TabManager {
         variableStates.updateResizingState()
     }
 
-    @MainActor private static func getDefaultTab(config: any TabManagerConfiguration) -> (existentialTab: KeyboardTab.ExistentialTab, managerTab: ManagerTab) {
-        (actualTab(of: KeyboardTab.UserDependentTab.japanese, config: config), .user_dependent(.japanese))
+    @MainActor private static func getDefaultTab(config: any TabManagerConfiguration, japaneseLayoutOverride: LanguageLayout? = nil) -> (existentialTab: KeyboardTab.ExistentialTab, managerTab: ManagerTab) {
+        (actualTab(of: KeyboardTab.UserDependentTab.japanese, config: config, japaneseLayoutOverride: japaneseLayoutOverride), .user_dependent(.japanese))
     }
 
     @MainActor mutating func setTemporalTab(_ destination: KeyboardTab, variableStates: VariableStates) {
         let actualTab: KeyboardTab.ExistentialTab
         switch destination {
         case let .existential(tab):
-            self.updateVariableStates(variableStates, inputStyle: tab.inputStyle, language: tab.language)
+            let resolved = Self.existentialTab(of: .existential(tab), config: config, japaneseLayoutOverride: automaticJapaneseLayout)
+            self.updateVariableStates(variableStates, inputStyle: resolved.inputStyle, language: resolved.language)
             self.temporalTab = .existential(tab)
         case let .user_dependent(tab):
-            actualTab = Self.actualTab(of: tab, config: config)
+            actualTab = Self.actualTab(of: tab, config: config, japaneseLayoutOverride: automaticJapaneseLayout)
             self.updateVariableStates(variableStates, inputStyle: actualTab.inputStyle, language: actualTab.language)
             self.temporalTab = .user_dependent(tab)
         case .last_tab:
             if let lastTab {
-                actualTab = Self.existentialTab(of: lastTab, config: config)
+                actualTab = Self.existentialTab(of: lastTab, config: config, japaneseLayoutOverride: automaticJapaneseLayout)
                 self.temporalTab = lastTab
             } else {
-                (actualTab, self.temporalTab) = Self.getDefaultTab(config: config)
+                (actualTab, self.temporalTab) = Self.getDefaultTab(config: config, japaneseLayoutOverride: automaticJapaneseLayout)
             }
             self.updateVariableStates(variableStates, inputStyle: actualTab.inputStyle, language: actualTab.language)
         }
@@ -214,7 +230,8 @@ public struct TabManager {
     @MainActor mutating func moveTab(to destination: KeyboardTab, variableStates: VariableStates) {
         switch destination {
         case let .existential(tab):
-            self.updateVariableStates(variableStates, inputStyle: tab.inputStyle, language: tab.language)
+            let resolved = Self.existentialTab(of: .existential(tab), config: config, japaneseLayoutOverride: automaticJapaneseLayout)
+            self.updateVariableStates(variableStates, inputStyle: resolved.inputStyle, language: resolved.language)
             self.lastTab = self.currentTab
             self.currentTab = .existential(tab)
         // Custard内の変数の初期化を実行
@@ -226,7 +243,7 @@ public struct TabManager {
         //                }
         //            }
         case let .user_dependent(tab):
-            let actualTab = Self.actualTab(of: tab, config: config)
+            let actualTab = Self.actualTab(of: tab, config: config, japaneseLayoutOverride: automaticJapaneseLayout)
             self.updateVariableStates(variableStates, inputStyle: actualTab.inputStyle, language: actualTab.language)
             self.lastTab = self.currentTab
             self.currentTab = .user_dependent(tab)
@@ -235,11 +252,11 @@ public struct TabManager {
             // 適切なタブを取得する
             let actualTab: KeyboardTab.ExistentialTab
             if let lastTab,
-               Self.existentialTab(of: lastTab, config: config) != Self.existentialTab(of: currentTab, config: config) {
-                actualTab = Self.existentialTab(of: lastTab, config: config)
-                self.currentTab = .existential(Self.existentialTab(of: lastTab, config: config))
+               Self.existentialTab(of: lastTab, config: config, japaneseLayoutOverride: automaticJapaneseLayout) != Self.existentialTab(of: currentTab, config: config, japaneseLayoutOverride: automaticJapaneseLayout) {
+                actualTab = Self.existentialTab(of: lastTab, config: config, japaneseLayoutOverride: automaticJapaneseLayout)
+                self.currentTab = lastTab
             } else {
-                (actualTab, self.currentTab) = Self.getDefaultTab(config: config)
+                (actualTab, self.currentTab) = Self.getDefaultTab(config: config, japaneseLayoutOverride: automaticJapaneseLayout)
             }
             self.updateVariableStates(variableStates, inputStyle: actualTab.inputStyle, language: actualTab.language)
             self.lastTab = nil

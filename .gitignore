@@ -36,3 +36,13 @@ xcuserdata/
 **/xcshareddata/WorkspaceSettings.xcsettings
 
 # End of https://www.toptal.com/developers/gitignore/api/xcode
+
+# Local build artifacts
+.build/
+
+# Local signing and device diagnostics
+*.mobileprovision
+*.p12
+*.p8
+*.ipa
+duo-layout-diagnostics.json

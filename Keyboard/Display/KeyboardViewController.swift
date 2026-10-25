@@ -9,6 +9,7 @@
 import AzooKeyUtils
 import Combine
 import Contacts
+import Darwin
 import KanaKanjiConverterModule
 import KeyboardViews
 import SwiftUI
@@ -75,6 +76,83 @@ final class KeyboardViewController: UIInputViewController {
     private var hostViewBottomConstraint: NSLayoutConstraint?
     private var cancellables = Set<AnyCancellable>()
     private var lastKnownContainerSize: CGSize = .zero
+    private var foldLayout: LanguageLayout?
+    private var hingeObservation = "no update"
+    private static let modelIdentifier: String = {
+        if let simulated = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] {
+            return simulated
+        }
+        var info = utsname()
+        uname(&info)
+        return withUnsafeBytes(of: info.machine) { bytes in
+            String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+        }
+    }()
+    #if DEBUG
+    private var lastFoldDiagnostic = ""
+    private var foldDiagnostics: [[String: Any]] = []
+    #endif
+
+    private func applyFoldLayout() {
+        let screenSize = view.window?.windowScene?.screen.bounds.size ?? .zero
+        let displayLayout = DuoKeyboardLayout.layout(screenSize: screenSize, modelIdentifier: Self.modelIdentifier)
+        let enabled = AutomaticFoldLayout.value
+        // The active display is authoritative. Keyboard extensions may not receive hinge updates.
+        let layout = enabled ? (displayLayout ?? foldLayout) : nil
+        KeyboardViewController.variableStates.setAutomaticJapaneseLayout(layout)
+        #if DEBUG
+        recordFoldDiagnostic(screenSize: screenSize, layout: layout, enabled: enabled)
+        #endif
+    }
+
+    #if DEBUG
+    /// Bounded local diagnostics: geometry and state only, never typed text or candidates.
+    private func recordFoldDiagnostic(screenSize: CGSize, layout: LanguageLayout?, enabled: Bool) {
+        guard view.window != nil else { return }
+        let layoutName = layout.map { String(describing: $0) } ?? "none"
+        let signature = "\(screenSize)/\(view.bounds.width)/\(hingeObservation)/\(layoutName)/\(enabled)"
+        guard signature != lastFoldDiagnostic else { return }
+        lastFoldDiagnostic = signature
+        foldDiagnostics.append([
+            "screenWidth": screenSize.width,
+            "screenHeight": screenSize.height,
+            "keyboardWidth": view.bounds.width,
+            "hinge": hingeObservation,
+            "layout": layoutName,
+            "enabled": enabled,
+            "timestamp": Date().timeIntervalSince1970,
+        ])
+        foldDiagnostics = Array(foldDiagnostics.suffix(16))
+        guard let directory = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: SharedStore.appGroupKey),
+              let data = try? JSONSerialization.data(withJSONObject: foldDiagnostics, options: [.sortedKeys]) else { return }
+        try? data.write(to: directory.appendingPathComponent("duo-layout-diagnostics.json"), options: .atomic)
+    }
+    #endif
+
+    private func observeHinge() {
+        guard #available(iOS 27.1, *) else { return }
+        view.addInteraction(UIHingeInteraction { [weak self] _, update in
+            guard let self else { return }
+            guard let hinge = update.hinge else {
+                // A detached hierarchy is not evidence that the device closed.
+                self.hingeObservation = "unavailable"
+                self.applyFoldLayout()
+                return
+            }
+            self.hingeObservation = String(describing: hinge.status)
+            switch hinge.status {
+            case .closed:
+                self.foldLayout = .flick
+            case .partiallyOpen, .fullyOpen:
+                self.foldLayout = .qwerty
+            case .unknown:
+                return
+            @unknown default:
+                return
+            }
+            self.applyFoldLayout()
+        })
+    }
 
     // 現在のデバイス向きをWindowSceneから判定（取得不能時はUIDeviceでフォールバック）
     private func currentKeyboardOrientation() -> KeyboardOrientation {
@@ -122,6 +200,7 @@ final class KeyboardViewController: UIInputViewController {
         }
         SemiStaticStates.shared.setScreenWidth(size.width)
         KeyboardViewController.variableStates.setContainerWidth(size.width, orientation: orientation)
+        self.applyFoldLayout()
         if shouldUpdateHeight {
             self.updateScreenHeight()
         }
@@ -142,6 +221,7 @@ final class KeyboardViewController: UIInputViewController {
         KeyboardViewController.variableStates.initialize()
 
         self.setupInitialKeyboardHeight()
+        self.observeHinge()
 
         KeyboardViewController.variableStates
             .$interfaceSize
@@ -258,6 +338,7 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        self.applyFoldLayout()
         // サイズに関する情報はこのタイミングで設定する
         if #available(iOS 26, *) {
             let size = self.currentKeyboardViewSize()
@@ -306,6 +387,7 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        self.applyFoldLayout()
         // iOS 26以上で、レイアウト確定後に向き・サイズを反映
         if #available(iOS 26, *) {
             let size = self.currentKeyboardViewSize()

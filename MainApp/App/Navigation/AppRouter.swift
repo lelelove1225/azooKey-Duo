@@ -15,7 +15,7 @@ final class AppRouter: ObservableObject {
     @Published var importedFileURL: URL?
 
     func open(_ url: URL) {
-        if url.scheme?.lowercased() == "azookey" {
+        if url.scheme?.lowercased() == "azookeyduo" {
             let host = url.host?.lowercased()
             let lastPathComponent = url.lastPathComponent.lowercased()
             if host == "settings", lastPathComponent == "zenzai" {

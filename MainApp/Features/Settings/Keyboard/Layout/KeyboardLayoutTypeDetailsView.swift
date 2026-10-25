@@ -17,6 +17,9 @@ struct KeyboardLayoutTypeDetailsView: View {
                 BoolSettingView(.liveConversion)
             }
             Section {
+                BoolSettingView(.automaticFoldLayout)
+            }
+            Section {
                 LanguageLayoutSettingView(.japaneseKeyboardLayout, language: .japanese).padding(.vertical)
             }
             Section {

@@ -313,3 +313,15 @@ private enum DeprecatedSetting {
         public static let key: String = "display_tab_bar_button"
     }
 }
+
+/// Enabled by default in the Duo fork; inert on devices without a hinge.
+public struct AutomaticFoldLayout: BoolKeyboardSettingKey {
+    public static let title: LocalizedStringKey = "開閉に合わせて日本語配列を切り替える"
+    public static let explanation: LocalizedStringKey = "閉じるとフリック、開くとローマ字入力になります。iPhone Duoで利用できます。"
+    public static let defaultValue = true
+    public static let key = "automatic_fold_layout"
+}
+
+public extension KeyboardSettingKey where Self == AutomaticFoldLayout {
+    static var automaticFoldLayout: Self { .init() }
+}
